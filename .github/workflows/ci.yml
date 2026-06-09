@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Tk(GUI) 테스트를 가상 디스플레이에서 돌리기 위한 의존성
+      - run: sudo apt-get update && sudo apt-get install -y xvfb tk
+      - run: python -m pip install --upgrade pip pytest
+      - name: Run tests
+        run: xvfb-run -a python -m pytest -q

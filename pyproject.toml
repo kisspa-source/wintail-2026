@@ -3,6 +3,8 @@ name = "wintail-2026"
 version = "0.1.0"
 description = "차세대 경량 Windows 로그 뷰어 (원조 WinTail 레퍼런스)"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

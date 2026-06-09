@@ -1,5 +1,8 @@
 # wintail-2026
 
+[![CI](https://github.com/kisspa-source/wintail-2026/actions/workflows/ci.yml/badge.svg)](https://github.com/kisspa-source/wintail-2026/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Doug Edwards의 원조 **WinTail**을 레퍼런스로 한 차세대 경량 Windows 로그 뷰어.
 원조의 정체성(설치 없음·단일 EXE·즉시 실행·실시간 Tail·경량)은 유지하면서,
 한계(64KB 제한·ANSI 중심·단일 탭·하이라이트 없음)를 걷어내고 현대적 기능을 더했다.
@@ -79,4 +82,9 @@ ui/                   Tkinter 레이어
   toast.py            짧게 떴다 사라지는 알림(복사 피드백)
   fontdialog.py       '모든 글꼴' 선택 다이얼로그
   theme.py / config.py  테마 프리셋 / 설정 영속화
+tools/launch_smoke.py GUI 런처 스모크(개발용)
 ```
+
+## 라이선스
+
+[MIT](LICENSE) © 2026 kisspa-source
