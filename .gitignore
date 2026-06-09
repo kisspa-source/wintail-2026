@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 빌드 산출물
+build/
+dist/
+*.exe
+*.build/
+*.dist/
+*.onefile-build/
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 에디터/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
