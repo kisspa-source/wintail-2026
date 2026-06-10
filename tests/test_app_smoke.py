@@ -576,6 +576,164 @@ def test_legacy_theme_name_resolved(root, monkeypatch):
         t.close()
 
 
+# ---- 화면 지우기(표시만 비움 — 파일/인덱스 불변) ---------------------------
+
+
+def _pump_until(root, app, cond, ticks=400):
+    import time
+
+    for _ in range(ticks):
+        app._pump_tick()
+        root.update()
+        if cond():
+            return
+        time.sleep(0.005)
+
+
+def test_clear_display_empties_view_but_keeps_file(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "clr.log")  # 500줄
+    tab.set_live(False)
+    app.clear_display()
+    assert tab._source_total() == 0
+    assert tab.view.content.get("1.0", "end-1c") == ""   # 화면은 비워짐
+    assert tab.engine.get_total_lines() == 500           # 인덱스는 그대로
+    assert (tmp_path / "clr.log").stat().st_size > 0     # 실제 파일 불변
+    assert "지움" in tab.status_text()
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_clear_display_shows_only_new_lines(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    p = tmp_path / "tailclr.log"
+    p.write_bytes(b"".join(b"old %d\n" % i for i in range(100)))
+    app.open_file(str(p))
+    tab = app.tabs.current()
+    _pump_until_indexed(root, tab, app)
+    tab.view.set_wrap(False)
+    tab.model.set_viewport_lines(10)
+    tab.set_live(True)
+    tab.clear_display()
+    assert tab._source_total() == 0
+    with open(p, "ab") as f:
+        f.write(b"new A\nnew B\n")
+    _pump_until(root, app, lambda: tab.engine.get_total_lines() >= 102)
+    tab.render()
+    assert tab._source_total() == 2
+    text = tab.view.content.get("1.0", "end-1c")
+    assert "new A" in text and "old" not in text
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_restore_display_brings_back_old_lines(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "rst.log")
+    tab.view.set_wrap(False)
+    tab.set_live(False)
+    tab.clear_display()
+    assert tab._source_total() == 0
+    tab.restore_display()
+    assert tab._source_total() == 500
+    # 복원 직후엔 지웠던 지점(끝부분)이 보인다 — 보던 위치 유지
+    assert "line 49" in tab.view.content.get("1.0", "end-1c")
+    tab._on_goto("home")
+    assert "line 0" in tab.view.content.get("1.0", "end-1c")
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_clear_display_maps_abs_line_and_source_total(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "map.log")
+    tab.set_live(False)
+    tab._clear_line = 100               # 기준 줄을 중간에 둔 경우(절대 줄)
+    tab.model.set_top(0)
+    assert tab._source_total() == 400
+    assert tab._abs_file_line(1) == 100  # 화면 첫 줄 = 파일 100번 줄
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_clear_display_with_hide_filter_rows(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_with_matches(app, root, tmp_path)        # ERROR가 0,10,20,30,40줄
+    tab.apply_filter("ERROR", "hide", False, False)
+    _wait_filter_complete(app, root, tab)
+    assert tab._source_total() == 5
+    tab._clear_line = 25                # 25줄 앞의 일치 3개(0,10,20)가 숨는다
+    assert tab._source_total() == 2
+    assert [ln.line_no for ln in tab._fetch(0, 10)] == [30, 40]
+    tab.restore_display()
+    assert tab._source_total() == 5
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_goto_next_match_skips_cleared(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_with_matches(app, root, tmp_path)        # highlight, 일치 0,10,20,30,40
+    tab._clear_line = 25
+    cursors = []
+    for _ in range(3):
+        tab.goto_next_match(forward=True)
+        cursors.append(tab._match_cursor)
+    assert cursors == [30, 40, 30]      # 숨겨진 0/10/20은 건너뛰고 순환도 기준 뒤에서
+    tab.goto_next_match(forward=False)  # 30에서 뒤로 → 앞쪽은 숨김 → 끝(40)으로 순환
+    assert tab._match_cursor == 40
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_match_count_text_excludes_cleared(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_with_matches(app, root, tmp_path)
+    tab._clear_line = 25
+    tab.goto_next_match(forward=True)   # → 30, 스캔 시작
+    _wait_filter_complete(app, root, tab)
+    assert tab.match_count_text() == "1/2"
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_truncate_resets_clear(root, tmp_path, monkeypatch):
+    from engine.events import Truncated
+
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "trunc.log")
+    tab.clear_display()
+    assert tab._clear_line == 500
+    tab.handle_events([Truncated(0)], active=True)       # 로테이션 → 지우기 해제
+    assert tab._clear_line == 0
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_app_clear_display_without_tab_is_noop(root, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    app.clear_display()                 # 탭 없음 — 무동작/무예외
+    app.restore_display()
+
+
 def test_multi_tab(root, tmp_path):
     app = wintail.App(root)
     app.pump.stop()

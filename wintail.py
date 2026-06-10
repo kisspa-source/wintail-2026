@@ -154,6 +154,8 @@ class App:
         self.toolbar.pack(side="top", fill="x")
         ttk.Separator(self.root, orient="horizontal").pack(side="top", fill="x")  # 툴바|본문 구분선
         ttk.Button(self.toolbar, text="열기", command=self.open_dialog).pack(side="left", padx=2)
+        # 표시만 비운다 — 실제 파일은 건드리지 않으며 보기 메뉴에서 복원 가능.
+        ttk.Button(self.toolbar, text="화면 지우기", command=self.clear_display).pack(side="left", padx=2)
 
         self.follow_var = tk.BooleanVar(value=self.config.get("follow_default", True))
         ttk.Checkbutton(self.toolbar, text="Follow", variable=self.follow_var,
@@ -220,6 +222,9 @@ class App:
         viewmenu.add_command(label="다음 테마", command=self.toggle_theme)
         viewmenu.add_command(label="맨 아래로 (End)", command=self._goto_end_current)
         viewmenu.add_separator()
+        viewmenu.add_command(label="화면 지우기  (Ctrl+L)", command=self.clear_display)
+        viewmenu.add_command(label="지운 화면 복원", command=self.restore_display)
+        viewmenu.add_separator()
         self.wrap_var = tk.BooleanVar(value=self._wrap)
         viewmenu.add_checkbutton(label="자동 줄바꿈", variable=self.wrap_var,
                                  command=self._on_wrap_toggle)
@@ -238,6 +243,7 @@ class App:
 
         self.root.bind("<Control-o>", lambda e: self.open_dialog())
         self.root.bind("<Control-w>", lambda e: self.close_tab())
+        self.root.bind("<Control-l>", lambda e: self.clear_display())
         self.root.bind("<Control-equal>", lambda e: self._change_font_size(1))
         self.root.bind("<Control-plus>", lambda e: self._change_font_size(1))
         self.root.bind("<Control-minus>", lambda e: self._change_font_size(-1))
@@ -287,6 +293,19 @@ class App:
 
     def close_tab(self) -> None:
         self.tabs.close_current()
+
+    def clear_display(self) -> None:
+        """현재 탭 화면 지우기 — 표시만 비우고 실제 파일은 건드리지 않는다."""
+        tab = self.tabs.current()
+        if tab is not None and tab.clear_display():
+            self.set_status_message(
+                "화면을 지웠습니다 (파일은 그대로) — 보기 ▸ '지운 화면 복원'으로 되돌릴 수 있습니다")
+
+    def restore_display(self) -> None:
+        """화면 지우기 해제 — 숨겼던 이전 내용을 다시 보여준다."""
+        tab = self.tabs.current()
+        if tab is not None:
+            tab.restore_display()
 
     def toggle_theme(self) -> None:
         """다음 프리셋으로 순환(메뉴/단축키). 콤보 var를 바꾸면 trace가 적용한다."""

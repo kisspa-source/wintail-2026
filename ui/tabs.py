@@ -43,6 +43,7 @@ class LogTab:
         self.filter_ignore_case = False
         self._status_msg = ""
         self._match_cursor = None  # 마지막으로 이동한 일치 줄(Enter 찾기용)
+        self._clear_line = 0  # 화면 지우기 기준(절대 줄) — 이 줄 앞은 표시하지 않음(파일 불변)
 
         # 위젯을 만들기 전에 파일부터 연다 — 실패하면(없는 파일/권한 등) 예외가
         # 위로 전파되고 위젯/엔진 자원이 남지 않는다.
@@ -81,9 +82,20 @@ class LogTab:
         return self.filter_mode == "hide" and self.engine.filter_mode() == "hide"
 
     def _source_total(self) -> int:
-        return self.engine.get_filtered_total() if self._is_hide() else self.engine.get_total_lines()
+        raw = self.engine.get_filtered_total() if self._is_hide() else self.engine.get_total_lines()
+        return max(0, raw - self._clear_rows())
+
+    def _clear_rows(self) -> int:
+        """화면 지우기로 숨길 앞부분 행 수(현재 소스 기준). hide 모드는 기준 줄
+        앞의 일치 수로 환산한다. 뷰의 행 좌표 = 소스 행 좌표 - 이 값."""
+        if self._clear_line <= 0:
+            return 0
+        if self._is_hide():
+            return self.engine.match_rank_before(self._clear_line)
+        return min(self._clear_line, self.engine.get_total_lines())
 
     def _fetch(self, top: int, n: int):
+        top += self._clear_rows()
         if self._is_hide():
             return self.engine.get_filtered_lines(top, n)
         lines = self.engine.get_lines(top, n)
@@ -105,7 +117,7 @@ class LogTab:
         if self._match_cursor is None or self._is_hide():
             self.view.mark_current(None)
             return
-        rl = self._match_cursor - self.model.top_line + 1
+        rl = self._match_cursor - self._clear_rows() - self.model.top_line + 1
         self.view.mark_current(rl if 1 <= rl <= self.model.viewport_lines else None)
 
     # ---- 이벤트 처리 ---------------------------------------------------
@@ -117,6 +129,7 @@ class LogTab:
                 changed = True
             elif isinstance(e, Truncated):
                 self.model.set_top(0)
+                self._clear_line = 0  # 로테이션된 새 내용은 처음부터 다시 보여준다
                 changed = True
             elif isinstance(e, EncodingDetected):
                 self.encoding_label = e.label
@@ -197,7 +210,7 @@ class LogTab:
 
     def _abs_file_line(self, render_line: int) -> int | None:
         """화면의 render_line(1-base)을 전체 파일 줄 번호로 변환."""
-        base = self.model.top_line + (render_line - 1)
+        base = self.model.top_line + (render_line - 1) + self._clear_rows()
         if base < 0:
             return None
         if self._is_hide():
@@ -209,7 +222,7 @@ class LogTab:
         """블록의 화면에 보이는 부분만 선택 표시(복사는 이미 끝남). hide 모드는 생략."""
         if self._is_hide():
             return
-        top = self.model.top_line
+        top = self.model.top_line + self._clear_rows()
         hi = top + self.model.viewport_lines - 1
         if abs_el < top or abs_sl > hi:
             return
@@ -228,6 +241,39 @@ class LogTab:
         else:
             self.auto = False
         self.app.reflect_follow(self)  # 체크박스를 live&auto 상태로 동기화
+        self.render()
+
+    def clear_display(self) -> bool:
+        """화면 지우기 — 지금까지 표시된 내용을 화면에서만 숨긴다(파일/인덱스 불변).
+
+        현재 줄 수를 기준 줄로 기록하고 그 앞을 모든 조회에서 건너뛴다.
+        restore_display로 즉시 복원할 수 있고, live면 이후 추가분을 바로 따라간다.
+        """
+        total = self.engine.get_total_lines()
+        if total <= 0:
+            return False
+        self._clear_line = total
+        self._match_cursor = None  # 숨겨진 영역의 일치 줄을 가리키지 않게
+        self.model.set_total(self._source_total())
+        self.model.set_top(0)
+        if self.live:
+            self.auto = True
+            self.model.goto_end()
+        self.app.reflect_follow(self)
+        self.render()
+        return True
+
+    def restore_display(self) -> None:
+        """화면 지우기 해제 — 숨겼던 이전 내용을 다시 보인다(보던 행 유지)."""
+        if self._clear_line <= 0:
+            return
+        shifted = self.model.top_line + self._clear_rows()  # 지금 보는 행의 복원 후 위치
+        self._clear_line = 0
+        self.model.set_total(self._source_total())
+        if self.live and self.auto:
+            self.model.goto_end()
+        else:
+            self.model.set_top(shifted)
         self.render()
 
     def apply_filter(self, pattern: str, mode: str, regex: bool, ignore_case: bool) -> None:
@@ -258,14 +304,19 @@ class LogTab:
         if total <= 0:
             return
         self.engine.start_match_scan()  # 개수/순위용 인덱스를 lazy로 시작(첫 탐색 시)
+        base = self._clear_line  # 화면 지우기 기준 앞의 일치는 건너뛴다(순환도 기준 뒤에서)
         if self._match_cursor is None:
-            probe = self.model.top_line  # 첫 Enter는 현재 위치 포함해서 탐색
+            probe = self.model.top_line + self._clear_rows()  # 첫 Enter는 현재 위치 포함해서 탐색
         else:
             probe = self._match_cursor + (1 if forward else -1)
         hit = self.engine.next_match_line(probe, forward=forward)
+        if hit is not None and hit < base:
+            hit = None
         wrapped = hit is None
         if hit is None:  # 끝 → 반대쪽 끝에서 순환
-            hit = self.engine.next_match_line(0 if forward else total - 1, forward=forward)
+            hit = self.engine.next_match_line(base if forward else total - 1, forward=forward)
+            if hit is not None and hit < base:
+                hit = None
         if hit is None:
             self.app.set_status_message("일치 항목 없음")
             return
@@ -275,7 +326,8 @@ class LogTab:
             self.app.set_status_message("처음으로 돌아감" if forward else "끝으로 돌아감")
 
     def _goto_centered(self, line: int) -> None:
-        self.model.set_top(self._centered_top(line, self.model.viewport_lines))
+        # _centered_top은 절대 줄 좌표 — 뷰 좌표로는 숨긴 앞부분을 빼야 한다.
+        self.model.set_top(self._centered_top(line, self.model.viewport_lines) - self._clear_rows())
         self.auto = self.model.at_bottom()
         self.app.reflect_follow(self)
         self.render()
@@ -304,11 +356,12 @@ class LogTab:
             return ""
         if not self.engine.match_scan_started():
             return ""
-        total = self.engine.get_filtered_total()
+        cleared = self.engine.match_rank_before(self._clear_line)  # 화면 지우기로 숨은 일치
+        total = max(0, self.engine.get_filtered_total() - cleared)
         approx = "" if self.engine.is_filter_complete() else "~"
         if self._match_cursor is None:
             return f"{approx}{total:,}건"
-        return f"{self.engine.match_rank(self._match_cursor):,}/{approx}{total:,}"
+        return f"{max(0, self.engine.match_rank(self._match_cursor) - cleared):,}/{approx}{total:,}"
 
     def apply_theme(self) -> None:
         self.view.apply_theme(self.app.theme, self.app.classifier.colors())
@@ -325,6 +378,8 @@ class LogTab:
             parts.append(f"filter: {total:,} matches")
         elif self.filter_pattern:
             parts.append("filter: highlight")
+        if self._clear_line > 0:
+            parts.append(f"지움: 이전 {self._clear_line:,}줄 숨김")
         if not self.engine.is_index_complete():
             parts.append("indexing…")
         if self._status_msg:

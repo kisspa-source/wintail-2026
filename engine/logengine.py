@@ -203,6 +203,13 @@ class LogEngine:
         sc = self._filter_scanner
         return sc.rank_of(line_no) if sc is not None else 0
 
+    def match_rank_before(self, line_no: int) -> int:
+        """line_no 앞(미만)의 일치 줄 개수 — 화면 지우기로 숨겨진 일치를 셀 때 쓴다."""
+        sc = self._filter_scanner
+        if sc is None or line_no <= 0:
+            return 0
+        return sc.rank_of(line_no - 1)
+
     def clear_filter(self) -> None:
         if self._filter_stop is not None:
             self._filter_stop.set()
