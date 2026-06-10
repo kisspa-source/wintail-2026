@@ -778,7 +778,8 @@ def test_slow_panel_scan_lists_hits_and_navigates(root, tmp_path, monkeypatch):
     panel._on_select()
     # 패널이 열리며 실제 리사이즈로 viewport_lines가 갱신되므로 현재 값 기준으로 검증
     assert tab.model.top_line == 120 - tab.model.viewport_lines // 2  # 가운데 배치
-    assert tab.view.content.tag_ranges("sel")        # 해당 줄 선택 표시
+    # 포커스가 패널에 있어도 보이는 전용 강조(gotoline) — sel 태그가 아님
+    assert tab.view.content.tag_ranges("gotoline")
     for t in app.tabs.all():
         t.close()
 
@@ -830,6 +831,28 @@ def test_slow_panel_resets_when_tab_closed(root, tmp_path, monkeypatch):
     assert panel._tab is None
     assert panel._shown == 0
     assert "닫혔" in panel.info_var.get()
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_goto_line_mark_follows_scroll_and_rerender(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_slow_log(app, root, tmp_path, "mk.log")
+    tab.goto_line(120)
+    assert tab._goto_mark == 120
+    assert tab.view.content.tag_ranges("gotoline")
+    tab.render()                                     # 라이브 갱신 시뮬레이션 → 강조 유지
+    assert tab.view.content.tag_ranges("gotoline")
+    tab.model.set_top(0)                             # 멀리 스크롤 → 화면 밖이면 해제
+    tab.render()
+    assert not tab.view.content.tag_ranges("gotoline")
+    tab.goto_line(120)                               # 다시 이동 → 다시 표시
+    assert tab.view.content.tag_ranges("gotoline")
+    tab.clear_display()                              # 화면 지우기 → 강조도 해제
+    assert tab._goto_mark is None
+    assert not tab.view.content.tag_ranges("gotoline")
     for t in app.tabs.all():
         t.close()
 

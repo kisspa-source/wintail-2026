@@ -143,6 +143,18 @@ class LineView(tk.Frame):
         if 1 <= render_line <= last:
             self.content.tag_add("curmatch", f"{render_line}.0", f"{render_line}.end")
 
+    def mark_goto(self, render_line) -> None:
+        """이동 대상 줄(화면 줄 번호)에 gotoline 강조를 입힌다. None이면 해제.
+
+        sel 태그와 달리 포커스가 없어도 보이고, 렌더마다 LogTab이 다시 불러
+        스크롤/라이브 갱신에도 유지된다. 줄 전체 폭(개행 포함)을 칠해 눈에 띈다."""
+        self.content.tag_remove("gotoline", "1.0", "end")
+        if render_line is None:
+            return
+        last = int(self.content.index("end-1c").split(".")[0])
+        if 1 <= render_line <= last:
+            self.content.tag_add("gotoline", f"{render_line}.0", f"{render_line + 1}.0")
+
     def select_render(self, sl, sc, el, ec) -> None:
         """렌더(화면) 좌표 범위를 선택 표시한다. 줄 번호는 내용 범위로 클램프하고,
         끝 칸으로 "end" 같은 Tk 인덱스 표현도 허용한다. 시각 피드백 전용."""
@@ -244,6 +256,8 @@ class LineView(tk.Frame):
         self.gutter.configure(bg=theme["gutter_bg"], fg=theme["gutter_fg"])
         self.content.tag_configure("match", background=theme["match_bg"])
         self.content.tag_configure("curmatch", background=theme["current_match_bg"])
+        self.content.tag_configure("gotoline", background=theme["select_bg"])
         for name, color in level_colors.items():
             self.content.tag_configure(f"lvl_{name}", foreground=color)
-        self.content.tag_raise("curmatch")  # 현재 일치 배경이 일반 match/레벨 위로
+        self.content.tag_raise("gotoline")  # 이동 대상 줄이 일반 match/레벨 위로
+        self.content.tag_raise("curmatch")  # 현재 일치 배경이 최상위

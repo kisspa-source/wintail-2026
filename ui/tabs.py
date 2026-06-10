@@ -46,6 +46,7 @@ class LogTab:
         self._status_msg = ""
         self._match_cursor = None  # 마지막으로 이동한 일치 줄(Enter 찾기용)
         self._clear_line = 0  # 화면 지우기 기준(절대 줄) — 이 줄 앞은 표시하지 않음(파일 불변)
+        self._goto_mark = None  # goto_line으로 이동한 대상 줄(절대) — gotoline 강조 유지용
 
         # 위젯을 만들기 전에 파일부터 연다 — 실패하면(없는 파일/권한 등) 예외가
         # 위로 전파되고 위젯/엔진 자원이 남지 않는다.
@@ -110,6 +111,7 @@ class LogTab:
         lines = self._fetch(self.model.top_line, self.model.viewport_lines)
         self.view.render(lines, self.app.classifier, self.engine.match_spans)
         self._refresh_current_highlight()
+        self._refresh_goto_mark()
         first, last = self.model.scroll_fractions()
         self.view.set_scroll(first, last)
         self.app.update_status(self)
@@ -122,6 +124,15 @@ class LogTab:
         rl = self._match_cursor - self._clear_rows() - self.model.top_line + 1
         self.view.mark_current(rl if 1 <= rl <= self.model.viewport_lines else None)
 
+    def _refresh_goto_mark(self) -> None:
+        """느린 쿼리 패널 등에서 이동한 대상 줄 강조를 렌더마다 다시 입힌다.
+        스크롤/라이브 갱신에도 같은 절대 줄을 따라간다(화면 밖이면 해제)."""
+        if self._goto_mark is None or self._is_hide():
+            self.view.mark_goto(None)
+            return
+        rl = self._goto_mark - self._clear_rows() - self.model.top_line + 1
+        self.view.mark_goto(rl if 1 <= rl <= self.model.viewport_lines else None)
+
     # ---- 이벤트 처리 ---------------------------------------------------
 
     def handle_events(self, events: list, active: bool) -> None:
@@ -132,6 +143,7 @@ class LogTab:
             elif isinstance(e, Truncated):
                 self.model.set_top(0)
                 self._clear_line = 0  # 로테이션된 새 내용은 처음부터 다시 보여준다
+                self._goto_mark = None  # 이전 파일 내용 기준 강조는 무효
                 changed = True
             elif isinstance(e, EncodingDetected):
                 self.encoding_label = e.label
@@ -258,6 +270,7 @@ class LogTab:
             return False
         self._clear_line = total
         self._match_cursor = None  # 숨겨진 영역의 일치 줄을 가리키지 않게
+        self._goto_mark = None     # 이동 강조도 숨겨진 영역이므로 해제
         self.model.set_total(self._source_total())
         self.model.set_top(0)
         if self.live:
@@ -310,10 +323,8 @@ class LogTab:
             self.app.set_status_message(
                 "화면 지우기로 숨긴 영역의 줄입니다 — 보기 ▸ '지운 화면 복원' 후 이동하세요")
             return
+        self._goto_mark = line  # 렌더마다 gotoline 태그로 다시 칠해진다
         self._goto_centered(line)
-        rl = line - self._clear_rows() - self.model.top_line + 1
-        if 1 <= rl <= self.model.viewport_lines:
-            self.view.select_render(rl, 0, rl, "end")
 
     def goto_next_match(self, forward: bool = True) -> None:
         """highlight 모드에서 다음(Enter)/이전(Shift+Enter) 일치 줄로 이동한다.
