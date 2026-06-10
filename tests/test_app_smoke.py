@@ -877,6 +877,86 @@ def test_goto_line_blocked_by_hide_or_clear(root, tmp_path, monkeypatch):
         t.close()
 
 
+# ---- 검색 결과 패널 ----------------------------------------------------------
+
+
+def test_search_panel_lists_matches_and_navigates(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_with_matches(app, root, tmp_path)        # ERROR가 0,10,20,30,40줄(highlight)
+    app.toggle_search_panel()
+    panel = app._search_panel
+    assert panel is not None
+    panel.scan()
+    _pump_until(root, app, lambda: tab.engine.is_filter_complete() and panel._shown >= 5)
+    assert panel._shown == 5
+    assert [str(v) for v in panel.tree.item("2")["values"]] == ["21", "ERROR 20"]
+    assert panel.info_var.get().startswith("완료 5건")
+    panel.tree.selection_set("2")                        # 줄 20으로 이동
+    panel._on_select()
+    assert tab.model.top_line == max(0, 20 - tab.model.viewport_lines // 2)
+    assert tab.view.content.tag_ranges("gotoline")
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_search_panel_requires_pattern_and_resets_on_filter_change(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "sp.log")
+    app.toggle_search_panel()
+    panel = app._search_panel
+    panel.scan()                                         # 필터 비어 있음 → 안내
+    assert "검색어" in panel.info_var.get()
+    tab.apply_filter("line", "highlight", False, False)
+    panel.scan()
+    _pump_until(root, app, lambda: tab.engine.is_filter_complete() and panel._shown > 0)
+    assert panel._shown > 0
+    tab.apply_filter("0", "highlight", False, False)     # 필터 변경 → 결과 무효
+    assert panel._tab is None and panel._shown == 0
+    assert "다시 검색" in panel.info_var.get()
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_search_panel_paging_with_more_button(root, tmp_path, monkeypatch):
+    from ui import searchpanel
+
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    monkeypatch.setattr(searchpanel, "PAGE", 3)          # 페이지 크기를 줄여 검증
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_with_matches(app, root, tmp_path)        # 일치 5건 > PAGE 3
+    app.toggle_search_panel()
+    panel = app._search_panel
+    panel.scan()
+    _pump_until(root, app, lambda: tab.engine.is_filter_complete() and panel._shown >= 3)
+    assert panel._shown == 3
+    assert "표시 3" in panel.info_var.get()
+    assert panel.more_btn.winfo_manager() == "pack"      # 더 보기 노출
+    panel._more()
+    assert panel._shown == 5
+    assert panel.more_btn.winfo_manager() == ""          # 다 보였으면 숨김
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_right_side_panels_are_exclusive(root, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    app.toggle_slow_panel()
+    assert app._slow_panel is not None
+    app.toggle_search_panel()                            # 검색 패널 → 느린 쿼리 닫힘
+    assert app._slow_panel is None and app._search_panel is not None
+    app.toggle_slow_panel()                              # 반대 방향도 동일
+    assert app._search_panel is None and app._slow_panel is not None
+    app.toggle_slow_panel()
+    assert app._slow_panel is None
+
+
 # ---- 북마크 ---------------------------------------------------------------
 
 

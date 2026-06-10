@@ -249,6 +249,11 @@ class LogEngine:
             out.append(self._read_line_at(offset, line_no))
         return out
 
+    def filtered_line_no(self, row: int) -> int | None:
+        """row번째 일치 줄의 절대 줄 번호. 스캐너 없음/범위 밖이면 None."""
+        sc = self._filter_scanner
+        return sc.match_at(row) if sc is not None else None
+
     def match_spans(self, text: str) -> list[tuple[int, int]]:
         """하이라이트용: 텍스트 내 매칭 구간들. 필터 미설정 시 빈 목록."""
         return self._matcher.find_spans(text) if self._matcher is not None else []

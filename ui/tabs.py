@@ -148,6 +148,8 @@ class LogTab:
         for e in events:
             if isinstance(e, (Opened, IndexProgress, IndexComplete, Appended, FilterProgress, FilterComplete)):
                 changed = True
+                if isinstance(e, (FilterProgress, FilterComplete)):
+                    self.app.on_filter_scan_event(self, e)  # 검색 결과 패널 점진 채움
             elif isinstance(e, Truncated):
                 self.model.set_top(0)
                 self._clear_line = 0  # 로테이션된 새 내용은 처음부터 다시 보여준다
@@ -318,6 +320,7 @@ class LogTab:
         else:
             self.model.set_top(self.model.top_line)
         self.render()
+        self.app.on_filter_applied(self)  # 검색 결과 패널의 기존 결과는 무효
 
     # ---- 북마크 ---------------------------------------------------------
 

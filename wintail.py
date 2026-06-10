@@ -16,6 +16,7 @@ from engine.encoding import supported_codecs
 from ui import config as cfg
 from ui.bridge import EventPump
 from ui.highlight import HighlightRules, LevelClassifier
+from ui.searchpanel import SearchResultPanel
 from ui.slowpanel import SlowQueryPanel
 from ui.style import apply_combobox_popup, apply_style
 from ui.tabs import TabManager
@@ -47,6 +48,7 @@ class App:
         self._filter_after = None
         self._toast = None
         self._slow_panel = None
+        self._search_panel = None
 
         root.title("wintail-2026")
         root.geometry("1100x720")
@@ -232,6 +234,7 @@ class App:
         viewmenu.add_command(label="화면 지우기  (Ctrl+L)", command=self.clear_display)
         viewmenu.add_command(label="지운 화면 복원", command=self.restore_display)
         viewmenu.add_separator()
+        viewmenu.add_command(label="검색 결과 패널", command=self.toggle_search_panel)
         viewmenu.add_command(label="느린 쿼리 찾기", command=self.toggle_slow_panel)
         viewmenu.add_command(label="하이라이트 규칙…", command=self.edit_highlight_rules)
         viewmenu.add_separator()
@@ -311,8 +314,11 @@ class App:
     def close_tab(self) -> None:
         cur = self.tabs.current()
         self.tabs.close_current()
-        if cur is not None and self._slow_panel is not None:
-            self._slow_panel.on_tab_closed(cur)
+        if cur is None:
+            return
+        for panel in (self._slow_panel, self._search_panel):
+            if panel is not None:
+                panel.on_tab_closed(cur)
 
     def toggle_bookmark(self) -> None:
         """현재 탭 캐럿 줄의 북마크 토글 — Ctrl+F2 (거터 클릭과 동일)."""
@@ -340,13 +346,36 @@ class App:
             tab.render()
 
     def toggle_slow_panel(self) -> None:
-        """느린 쿼리 패널(우측) 열기/닫기 — 닫으면 진행 중 스캔도 중단한다."""
+        """느린 쿼리 패널(우측) 열기/닫기 — 닫으면 진행 중 스캔도 중단한다.
+
+        우측 자리는 하나만 쓴다 — 검색 결과 패널이 열려 있으면 먼저 닫는다."""
         if self._slow_panel is not None:
             self._slow_panel.close()
             self._slow_panel = None
             return
+        if self._search_panel is not None:
+            self.toggle_search_panel()
         self._slow_panel = SlowQueryPanel(self, self._center)
         self._slow_panel.pack(side="right", fill="y")
+
+    def toggle_search_panel(self) -> None:
+        """검색 결과 패널(우측) 열기/닫기 — 느린 쿼리 패널과 자리를 공유한다."""
+        if self._search_panel is not None:
+            self._search_panel.close()
+            self._search_panel = None
+            return
+        if self._slow_panel is not None:
+            self.toggle_slow_panel()
+        self._search_panel = SearchResultPanel(self, self._center)
+        self._search_panel.pack(side="right", fill="y")
+
+    def on_filter_scan_event(self, tab, event) -> None:
+        if self._search_panel is not None:
+            self._search_panel.on_scan_event(tab, event)
+
+    def on_filter_applied(self, tab) -> None:
+        if self._search_panel is not None:
+            self._search_panel.on_filter_changed(tab)
 
     def on_slow_scan_event(self, tab, event) -> None:
         if self._slow_panel is not None:
