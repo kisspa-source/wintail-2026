@@ -15,7 +15,7 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 from engine.encoding import supported_codecs
 from ui import config as cfg
 from ui.bridge import EventPump
-from ui.highlight import LevelClassifier
+from ui.highlight import HighlightRules, LevelClassifier
 from ui.slowpanel import SlowQueryPanel
 from ui.style import apply_combobox_popup, apply_style
 from ui.tabs import TabManager
@@ -38,6 +38,7 @@ class App:
         self.style = ttk.Style(root)
         self._menus: list[tk.Menu] = []
         self.classifier = LevelClassifier(self.config.get("level_rules"))
+        self.rules = HighlightRules(self.config.get("highlight_rules"))
         self._font_family = self._resolve_font()
         self._font_size = self._clamp_size(self.config.get("font_size", 11))
         self.font = tkfont.Font(family=self._font_family, size=self._font_size)
@@ -232,6 +233,11 @@ class App:
         viewmenu.add_command(label="지운 화면 복원", command=self.restore_display)
         viewmenu.add_separator()
         viewmenu.add_command(label="느린 쿼리 찾기", command=self.toggle_slow_panel)
+        viewmenu.add_command(label="하이라이트 규칙…", command=self.edit_highlight_rules)
+        viewmenu.add_separator()
+        viewmenu.add_command(label="북마크 토글  (Ctrl+F2)", command=self.toggle_bookmark)
+        viewmenu.add_command(label="다음 북마크  (F2)", command=lambda: self.next_bookmark(True))
+        viewmenu.add_command(label="이전 북마크  (Shift+F2)", command=lambda: self.next_bookmark(False))
         viewmenu.add_separator()
         self.wrap_var = tk.BooleanVar(value=self._wrap)
         viewmenu.add_checkbutton(label="자동 줄바꿈", variable=self.wrap_var,
@@ -252,6 +258,9 @@ class App:
         self.root.bind("<Control-o>", lambda e: self.open_dialog())
         self.root.bind("<Control-w>", lambda e: self.close_tab())
         self.root.bind("<Control-l>", lambda e: self.clear_display())
+        self.root.bind("<F2>", lambda e: self.next_bookmark(True))
+        self.root.bind("<Shift-F2>", lambda e: self.next_bookmark(False))
+        self.root.bind("<Control-F2>", lambda e: self.toggle_bookmark())
         self.root.bind("<Control-equal>", lambda e: self._change_font_size(1))
         self.root.bind("<Control-plus>", lambda e: self._change_font_size(1))
         self.root.bind("<Control-minus>", lambda e: self._change_font_size(-1))
@@ -305,6 +314,31 @@ class App:
         if cur is not None and self._slow_panel is not None:
             self._slow_panel.on_tab_closed(cur)
 
+    def toggle_bookmark(self) -> None:
+        """현재 탭 캐럿 줄의 북마크 토글 — Ctrl+F2 (거터 클릭과 동일)."""
+        tab = self.tabs.current()
+        if tab is not None:
+            tab.toggle_bookmark_at_caret()
+
+    def next_bookmark(self, forward: bool = True) -> None:
+        tab = self.tabs.current()
+        if tab is not None:
+            tab.goto_next_bookmark(forward)
+
+    def edit_highlight_rules(self) -> None:
+        """하이라이트 규칙 편집 다이얼로그 — 변경 즉시 모든 탭에 반영·저장."""
+        from ui.ruledialog import RuleDialog
+        RuleDialog(self.root, self.chrome, self.config.get("highlight_rules", []),
+                   self._apply_highlight_rules)
+
+    def _apply_highlight_rules(self, rules: list[dict]) -> None:
+        self.config["highlight_rules"] = rules
+        cfg.save(self.config)
+        self.rules = HighlightRules(rules)
+        for tab in self.tabs.all():
+            tab.view.set_rule_colors(self.rules.colors())
+            tab.render()
+
     def toggle_slow_panel(self) -> None:
         """느린 쿼리 패널(우측) 열기/닫기 — 닫으면 진행 중 스캔도 중단한다."""
         if self._slow_panel is not None:
@@ -318,8 +352,8 @@ class App:
         if self._slow_panel is not None:
             self._slow_panel.on_scan_event(tab, event)
 
-    def show_slow_hit(self, tab, line: int) -> None:
-        """느린 쿼리 패널 행 클릭 — 그 탭을 앞으로 가져와 해당 줄로 이동한다."""
+    def show_line(self, tab, line: int) -> None:
+        """패널(느린 쿼리/검색 결과) 행 클릭 — 그 탭을 앞으로 가져와 해당 줄로 이동."""
         if tab not in self.tabs.all():
             self.set_status_message("해당 로그 탭이 이미 닫혔습니다")
             return

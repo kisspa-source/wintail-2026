@@ -19,6 +19,7 @@ DEFAULTS: dict = {
     "follow_default": True,
     "encoding_default": "",  # 빈 값이면 자동 감지
     "level_rules": DEFAULT_LEVEL_RULES,
+    "highlight_rules": [],  # 사용자 다중 하이라이트: {pattern, color, regex, ignore_case}
     "recent_files": [],
     "max_recent": 10,
 }

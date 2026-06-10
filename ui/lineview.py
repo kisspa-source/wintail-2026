@@ -72,6 +72,7 @@ class LineView(tk.Frame):
         self.cb_resize = lambda n: None
         self.cb_zoom = lambda d: None
         self.cb_dblclick = lambda line, col: None  # (render_line, col) — LogTab이 처리
+        self.cb_gutter = lambda line: None  # 거터 클릭(render_line) — 북마크 토글
 
         self._bind_events()
         self.apply_theme(theme, {})
@@ -84,6 +85,7 @@ class LineView(tk.Frame):
         self.gutter.bind("<MouseWheel>", self._on_wheel)
         self.content.bind("<Configure>", self._on_configure)
         self.content.bind("<Double-Button-1>", self._on_double)
+        self.gutter.bind("<Button-1>", self._on_gutter_click)
 
     def _on_key(self, e):
         k = e.keysym
@@ -132,6 +134,22 @@ class LineView(tk.Frame):
         line, col = self.content.index(f"@{e.x},{e.y}").split(".")
         self.cb_dblclick(int(line), int(col))
         return "break"
+
+    def _on_gutter_click(self, e):
+        line = int(self.gutter.index(f"@{e.x},{e.y}").split(".")[0])
+        self.cb_gutter(line)
+        return "break"
+
+    def mark_bookmarks(self, rows) -> None:
+        """북마크 줄들의 거터(줄 번호)를 강조한다(화면 줄 번호 목록).
+
+        렌더마다 LogTab이 다시 호출한다. 줄바꿈 ON이면 거터가 숨겨져 있고
+        채워지지도 않으므로 표시하지 않는다(F2 탐색은 그대로 동작)."""
+        self.gutter.tag_remove("bm", "1.0", "end")
+        if self._wrap:
+            return
+        for r in rows:
+            self.gutter.tag_add("bm", f"{r}.0", f"{r + 1}.0")
 
     def mark_current(self, render_line) -> None:
         """현재 일치 줄(화면 줄 번호)에 curmatch 강조를 입힌다. None이면 해제.
@@ -217,7 +235,21 @@ class LineView(tk.Frame):
     def set_scroll(self, first: float, last: float) -> None:
         self.vbar.set(first, last)
 
-    def render(self, lines, classifier, match_spans) -> None:
+    def set_rule_colors(self, colors: list[str]) -> None:
+        """사용자 하이라이트 규칙 태그(hlr<i>)를 규칙 색 목록으로 다시 만든다."""
+        for name in self.content.tag_names():
+            if name.startswith("hlr"):
+                self.content.tag_delete(name)
+        for i, color in enumerate(colors):
+            try:
+                self.content.tag_configure(f"hlr{i}", background=color)
+            except tk.TclError:
+                pass  # 잘못된 색 문자열은 건너뛴다
+        # 필터 일치/이동/현재 일치 강조가 규칙 배경 위에 보이도록 우선순위 유지
+        for t in ("match", "gotoline", "curmatch"):
+            self.content.tag_raise(t)
+
+    def render(self, lines, classifier, match_spans, rule_spans=None) -> None:
         body = "\n".join(ln.text for ln in lines)
         self.content.delete("1.0", "end")
         self.content.insert("1.0", body)
@@ -236,6 +268,9 @@ class LineView(tk.Frame):
             lvl = classifier.classify(ln.text)
             if lvl is not None:
                 self.content.tag_add(f"lvl_{lvl['name']}", f"{i}.0", f"{i}.end")
+            if rule_spans is not None:
+                for (ri, s, e) in rule_spans(ln.text):
+                    self.content.tag_add(f"hlr{ri}", f"{i}.{s}", f"{i}.{e}")
             for (s, e) in match_spans(ln.text):
                 self.content.tag_add("match", f"{i}.{s}", f"{i}.{e}")
 
@@ -254,6 +289,7 @@ class LineView(tk.Frame):
             w.configure(bg=theme["bg"], fg=theme["fg"], insertbackground=theme["cursor"],
                         selectbackground=theme["select_bg"])
         self.gutter.configure(bg=theme["gutter_bg"], fg=theme["gutter_fg"])
+        self.gutter.tag_configure("bm", background=theme["accent"], foreground="#ffffff")
         self.content.tag_configure("match", background=theme["match_bg"])
         self.content.tag_configure("curmatch", background=theme["current_match_bg"])
         self.content.tag_configure("gotoline", background=theme["select_bg"])

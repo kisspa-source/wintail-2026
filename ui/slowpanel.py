@@ -2,7 +2,7 @@
 
 보기 메뉴로 토글되는 우측 사이드 패널. 엔진의 SlowQueryScanner가 백그라운드로
 `Time:<ms>` 패턴을 스캔하고, 결과(줄 번호·실행시간)를 Treeview에 점진적으로
-채운다. 행을 클릭하면 App.show_slow_hit가 스캔했던 탭의 해당 줄로 이동한다.
+채운다. 행을 클릭하면 App.show_line이 스캔했던 탭의 해당 줄로 이동한다.
 크롬 영역이므로 고정 크롬 테마(ttk 스타일)를 따른다.
 """
 
@@ -127,7 +127,7 @@ class SlowQueryPanel(ttk.Frame):
         hit = self._tab.engine.slow_hit(int(sel[0]))
         if hit is None:
             return
-        self.app.show_slow_hit(self._tab, hit[0])
+        self.app.show_line(self._tab, hit[0])
 
     def on_tab_closed(self, tab) -> None:
         """스캔했던 탭이 닫히면 결과를 비운다(엔진은 탭이 닫으며 이미 정지)."""

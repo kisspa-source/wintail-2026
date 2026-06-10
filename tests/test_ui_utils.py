@@ -1,7 +1,7 @@
 """순수 UI 유틸 테스트: LevelClassifier, pretty_json, config, theme."""
 
 from ui.config import DEFAULTS, load, push_recent, save
-from ui.highlight import DEFAULT_LEVEL_RULES, LevelClassifier
+from ui.highlight import DEFAULT_LEVEL_RULES, HighlightRules, LevelClassifier
 from ui.jsonpanel import pretty_json
 from ui.theme import DEFAULT_THEME, THEMES, get_theme, theme_names
 
@@ -28,6 +28,41 @@ def test_classify_priority_error_over_warn():
 def test_classify_case_insensitive():
     c = LevelClassifier(DEFAULT_LEVEL_RULES)
     assert c.classify("an error happened")["name"] == "error"
+
+
+# ---- HighlightRules (다중 하이라이트) ---------------------------------------
+
+
+def test_highlight_rules_spans_and_colors():
+    hr = HighlightRules([
+        {"pattern": "err", "color": "#ff0000"},                      # ignore_case 기본 True
+        {"pattern": r"\d+", "color": "#00ff00", "regex": True},
+    ])
+    spans = hr.spans("ERRor 123")
+    assert (0, 0, 3) in spans      # "ERR" — 대소문자 무시
+    assert (1, 6, 9) in spans      # "123" — 정규식
+    assert hr.colors() == ["#ff0000", "#00ff00"]
+
+
+def test_highlight_rules_case_sensitive():
+    hr = HighlightRules([{"pattern": "Err", "color": "#fff", "ignore_case": False}])
+    assert hr.spans("error") == []
+    assert hr.spans("Err!") == [(0, 0, 3)]
+
+
+def test_highlight_rules_invalid_regex_silently_ignored():
+    hr = HighlightRules([{"pattern": "([", "regex": True, "color": "#fff"}])
+    assert hr.spans("([ anything") == []
+    assert hr.colors() == ["#fff"]  # 태그 자리는 유지(색만 칠하고 매칭 없음)
+
+
+def test_highlight_rules_empty_and_none():
+    assert HighlightRules(None).spans("x") == []
+    assert HighlightRules([]).colors() == []
+
+
+def test_defaults_include_highlight_rules():
+    assert DEFAULTS["highlight_rules"] == []
 
 
 # ---- pretty_json ----------------------------------------------------------

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
+from bisect import bisect_left, bisect_right
 from tkinter import ttk
 
 from engine.events import (
@@ -47,6 +48,8 @@ class LogTab:
         self._match_cursor = None  # 마지막으로 이동한 일치 줄(Enter 찾기용)
         self._clear_line = 0  # 화면 지우기 기준(절대 줄) — 이 줄 앞은 표시하지 않음(파일 불변)
         self._goto_mark = None  # goto_line으로 이동한 대상 줄(절대) — gotoline 강조 유지용
+        self._bookmarks: list[int] = []  # 북마크 절대 줄 번호(오름차순)
+        self._bm_cursor = None  # 마지막으로 이동한 북마크(F2 탐색 기준)
 
         # 위젯을 만들기 전에 파일부터 연다 — 실패하면(없는 파일/권한 등) 예외가
         # 위로 전파되고 위젯/엔진 자원이 남지 않는다.
@@ -58,6 +61,7 @@ class LogTab:
         self.view.set_wrap(getattr(app, "_wrap", False))
         self.model = ViewportModel()
         self._wire_view()
+        self.view.set_rule_colors(app.rules.colors())
         self.model.set_viewport_lines(max(1, self.view.visible_lines()))
         self._initial_probe()
 
@@ -72,12 +76,14 @@ class LogTab:
         v.cb_resize = self._on_resize
         v.cb_zoom = self._on_zoom
         v.cb_dblclick = self._on_dblclick
+        v.cb_gutter = self.toggle_bookmark
 
     def _initial_probe(self) -> None:
         n = max(1, self.model.viewport_lines)
         probe = self.engine.get_tail_probe(n)
         if probe:
-            self.view.render(probe, self.app.classifier, self.engine.match_spans)
+            self.view.render(probe, self.app.classifier, self.engine.match_spans,
+                             self.app.rules.spans)
 
     # ---- 렌더링 --------------------------------------------------------
 
@@ -109,9 +115,11 @@ class LogTab:
     def render(self) -> None:
         self.model.set_total(self._source_total())
         lines = self._fetch(self.model.top_line, self.model.viewport_lines)
-        self.view.render(lines, self.app.classifier, self.engine.match_spans)
+        self.view.render(lines, self.app.classifier, self.engine.match_spans,
+                         self.app.rules.spans)
         self._refresh_current_highlight()
         self._refresh_goto_mark()
+        self.view.mark_bookmarks(self._bookmark_rows(lines))
         first, last = self.model.scroll_fractions()
         self.view.set_scroll(first, last)
         self.app.update_status(self)
@@ -144,6 +152,8 @@ class LogTab:
                 self.model.set_top(0)
                 self._clear_line = 0  # 로테이션된 새 내용은 처음부터 다시 보여준다
                 self._goto_mark = None  # 이전 파일 내용 기준 강조는 무효
+                self._bookmarks.clear()  # 북마크도 이전 내용 기준이라 무효
+                self._bm_cursor = None
                 changed = True
             elif isinstance(e, EncodingDetected):
                 self.encoding_label = e.label
@@ -309,6 +319,70 @@ class LogTab:
             self.model.set_top(self.model.top_line)
         self.render()
 
+    # ---- 북마크 ---------------------------------------------------------
+
+    def _bookmark_rows(self, lines) -> list[int]:
+        """렌더된 lines 중 북마크 줄의 화면 행 번호(1-base) 목록."""
+        if not self._bookmarks:
+            return []
+        bset = set(self._bookmarks)
+        return [i for i, ln in enumerate(lines, start=1) if ln.line_no in bset]
+
+    def toggle_bookmark(self, render_line: int) -> None:
+        """화면 render_line 줄의 북마크를 토글한다(거터 클릭/Ctrl+F2)."""
+        if render_line < 1 or self.model.top_line + render_line - 1 >= self._source_total():
+            return  # 내용 없는 빈 행 클릭
+        abs_line = self._abs_file_line(render_line)
+        if abs_line is None or abs_line < 0:
+            return
+        i = bisect_left(self._bookmarks, abs_line)
+        added = not (i < len(self._bookmarks) and self._bookmarks[i] == abs_line)
+        if added:
+            self._bookmarks.insert(i, abs_line)
+        else:
+            del self._bookmarks[i]
+        self.render()  # 안내 메시지는 렌더 후에 — render가 상태바를 status_text로 덮는다
+        self.app.set_status_message(
+            f"북마크 추가 — 줄 {abs_line + 1:,} (F2로 이동)" if added
+            else f"북마크 제거 — 줄 {abs_line + 1:,}")
+
+    def toggle_bookmark_at_caret(self) -> None:
+        """캐럿(마지막 클릭) 줄의 북마크 토글 — Ctrl+F2."""
+        try:
+            rl = int(self.view.content.index("insert").split(".")[0])
+        except (tk.TclError, ValueError):
+            return
+        self.toggle_bookmark(rl)
+
+    def goto_next_bookmark(self, forward: bool = True) -> None:
+        """다음/이전 북마크로 이동(F2/Shift+F2). 끝에서 순환한다.
+
+        화면 지우기로 숨긴 영역의 북마크는 건너뛰고, hide 필터 중에는 절대 줄과
+        화면 행이 어긋나므로 이동하지 않는다(goto_line과 동일 방침)."""
+        if self._is_hide():
+            self.app.set_status_message("hide 필터 적용 중에는 북마크 이동을 할 수 없습니다")
+            return
+        cands = self._bookmarks
+        if self._clear_line:
+            cands = cands[bisect_left(cands, self._clear_line):]
+        if not cands:
+            self.app.set_status_message("북마크가 없습니다 — 거터(줄 번호)를 클릭해 추가하세요")
+            return
+        if self._bm_cursor is not None:
+            i = bisect_right(cands, self._bm_cursor) if forward else bisect_left(cands, self._bm_cursor) - 1
+        else:  # 첫 이동은 현재 화면 top을 포함해 가장 가까운 쪽부터
+            ref = self.model.top_line + self._clear_rows()
+            i = bisect_left(cands, ref) if forward else bisect_right(cands, ref) - 1
+        wrapped = False
+        if forward and i >= len(cands):
+            i, wrapped = 0, True
+        elif not forward and i < 0:
+            i, wrapped = len(cands) - 1, True
+        self._bm_cursor = cands[i]
+        self.goto_line(self._bm_cursor)
+        if wrapped:
+            self.app.set_status_message("처음 북마크로 돌아감" if forward else "마지막 북마크로 돌아감")
+
     def goto_line(self, line: int) -> None:
         """절대 줄 번호로 이동(화면 가운데) 후 그 줄을 선택 표시 — 느린 쿼리 패널용.
 
@@ -399,6 +473,7 @@ class LogTab:
 
     def apply_theme(self) -> None:
         self.view.apply_theme(self.app.theme, self.app.classifier.colors())
+        self.view.set_rule_colors(self.app.rules.colors())
         self.render()
 
     def status_text(self) -> str:

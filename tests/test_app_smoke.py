@@ -877,6 +877,154 @@ def test_goto_line_blocked_by_hide_or_clear(root, tmp_path, monkeypatch):
         t.close()
 
 
+# ---- 북마크 ---------------------------------------------------------------
+
+
+def test_bookmark_toggle_via_gutter_marks_and_unmarks(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "bm.log")
+    tab.view.set_wrap(False)
+    tab.set_live(False)
+    tab.model.set_top(0)
+    tab.render()
+    tab.toggle_bookmark(5)                 # 거터 클릭과 동일 경로(render line 5 → 줄 4)
+    tab.toggle_bookmark(10)
+    assert tab._bookmarks == [4, 9]
+    assert tab.view.gutter.tag_ranges("bm")          # 거터에 표시
+    assert "북마크 추가" in app.status.cget("text")
+    tab.toggle_bookmark(5)                 # 같은 줄 다시 → 제거
+    assert tab._bookmarks == [9]
+    assert "북마크 제거" in app.status.cget("text")
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_bookmark_navigation_cycles_and_marks(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "bmn.log")
+    tab.view.set_wrap(False)
+    tab.set_live(False)
+    tab.model.set_top(0)
+    tab.render()
+    tab.toggle_bookmark(5)                 # 줄 4
+    tab.model.set_top(100)
+    tab.render()
+    tab.toggle_bookmark(1)                 # 줄 100
+    tab.model.set_top(0)
+    cursors = []
+    for fwd in (True, True, True, False):
+        tab.goto_next_bookmark(forward=fwd)
+        cursors.append(tab._bm_cursor)
+    assert cursors == [4, 100, 4, 100]     # 순환(앞으로 끝→처음, 뒤로 처음→끝)
+    assert tab._goto_mark == 100           # 이동 줄 강조 재사용
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_bookmark_empty_and_hide_messages(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "bme.log")
+    tab.set_live(False)
+    tab.goto_next_bookmark()
+    assert "북마크가 없습니다" in app.status.cget("text")
+    tab.apply_filter("line", "hide", False, False)
+    _wait_filter_complete(app, root, tab)
+    tab.goto_next_bookmark()
+    assert "hide" in app.status.cget("text")
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_bookmarks_cleared_on_truncate(root, tmp_path, monkeypatch):
+    from engine.events import Truncated
+
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "bmt.log")
+    tab.set_live(False)
+    tab.model.set_top(0)
+    tab.render()
+    tab.toggle_bookmark(3)
+    assert tab._bookmarks
+    tab.handle_events([Truncated(0)], active=True)
+    assert tab._bookmarks == [] and tab._bm_cursor is None
+    for t in app.tabs.all():
+        t.close()
+
+
+# ---- 다중 하이라이트 규칙 ----------------------------------------------------
+
+
+def test_highlight_rules_paint_visible_lines(root, tmp_path, monkeypatch):
+    saved = {}
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: saved.update(dict(c)))
+    app = wintail.App(root)
+    app.pump.stop()
+    p = tmp_path / "hl.log"
+    p.write_bytes(b"alpha one\nplain\nbeta two\n" * 5)
+    app.open_file(str(p))
+    tab = app.tabs.current()
+    _pump_until_indexed(root, tab, app)
+    tab.view.set_wrap(False)
+    tab.set_live(False)
+    tab.model.set_viewport_lines(15)
+    tab.model.set_top(0)
+    app._apply_highlight_rules([
+        {"pattern": "alpha", "color": "#ff0000", "regex": False, "ignore_case": True},
+        {"pattern": "beta", "color": "#00ff00", "regex": False, "ignore_case": True},
+    ])
+    assert tab.view.content.tag_ranges("hlr0") and tab.view.content.tag_ranges("hlr1")
+    assert str(tab.view.content.tag_cget("hlr0", "background")) == "#ff0000"
+    assert saved.get("highlight_rules")[0]["pattern"] == "alpha"   # 설정 저장
+    app._apply_highlight_rules([])                                 # 규칙 제거 → 태그 제거
+    assert not tab.view.content.tag_ranges("hlr0")
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_highlight_rules_invalid_regex_does_not_crash(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_indexed(app, root, tmp_path, "hbad.log")
+    app._apply_highlight_rules([{"pattern": "([", "regex": True, "color": "#fff"}])
+    tab.render()                                                   # 예외 없이 렌더
+    assert not tab.view.content.tag_ranges("hlr0")
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_rule_dialog_add_update_delete(root, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    from ui.ruledialog import RuleDialog
+
+    received = []
+    dlg = RuleDialog(root, wintail.get_theme("Light+"), [], received.append)
+    dlg.pattern_var.set("ERROR")
+    dlg.add_rule()
+    assert received[-1][0]["pattern"] == "ERROR"
+    assert received[-1][0]["ignore_case"] is True                  # 기본: 대소문자 무시
+    dlg.tree.selection_set("0")                                    # 선택 → 필드 로드
+    root.update()    # <<TreeviewSelect>>는 큐 이벤트라 처리 루프를 한 번 돌려야 한다
+    assert dlg.pattern_var.get() == "ERROR"
+    dlg.pattern_var.set("WARN")
+    dlg.case_var.set(True)                                         # 대소문자 구분
+    dlg.update_selected()
+    assert received[-1][0] == {"pattern": "WARN", "color": received[-1][0]["color"],
+                               "regex": False, "ignore_case": False}
+    dlg.tree.selection_set("0")
+    dlg.delete_selected()
+    assert received[-1] == []
+    dlg.top.destroy()
+
+
 def test_multi_tab(root, tmp_path):
     app = wintail.App(root)
     app.pump.stop()
