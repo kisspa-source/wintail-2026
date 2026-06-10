@@ -734,6 +734,126 @@ def test_app_clear_display_without_tab_is_noop(root, monkeypatch):
     app.restore_display()
 
 
+# ---- 느린 쿼리 패널 --------------------------------------------------------
+
+
+def _open_slow_log(app, root, tmp_path, name="slow.log"):
+    lines = [f"line {i}" for i in range(200)]
+    lines[50] = "x Time:1500 [QET:NORMAL] slow one"
+    lines[120] = "y Time:30000 [QET:SLOW] slower"
+    lines[130] = "z Time:200 [QET:NORMAL] fast"
+    p = tmp_path / name
+    p.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+    app.open_file(str(p))
+    tab = app.tabs.current()
+    _pump_until_indexed(root, tab, app)
+    tab.view.set_wrap(False)
+    tab.model.set_viewport_lines(10)
+    tab.set_live(False)
+    tab.model.set_top(0)
+    return tab
+
+
+def test_slow_panel_scan_lists_hits_and_navigates(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_slow_log(app, root, tmp_path)
+
+    app.toggle_slow_panel()
+    panel = app._slow_panel
+    assert panel is not None and panel.winfo_exists()
+    assert panel.tree.bind("<<TreeviewSelect>>")     # 클릭 배선 존재
+
+    panel.threshold_var.set("1.0")                   # 1초 이상
+    panel.scan()
+    _pump_until(root, app, lambda: tab.engine.is_slow_scan_complete() and panel._shown >= 2)
+    assert panel._shown == 2
+    # Tk는 숫자 형태 값("51")을 int로 돌려주므로 str로 맞춰 비교
+    assert [str(v) for v in panel.tree.item("0")["values"]] == ["51", "1,500 ms"]  # 1-base 줄
+    assert [str(v) for v in panel.tree.item("1")["values"]] == ["121", "30,000 ms"]
+    assert panel.info_var.get().startswith("완료: 2건")
+
+    panel.tree.selection_set("1")                    # 두 번째(파일 120줄) 클릭
+    panel._on_select()
+    # 패널이 열리며 실제 리사이즈로 viewport_lines가 갱신되므로 현재 값 기준으로 검증
+    assert tab.model.top_line == 120 - tab.model.viewport_lines // 2  # 가운데 배치
+    assert tab.view.content.tag_ranges("sel")        # 해당 줄 선택 표시
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_slow_panel_invalid_threshold_message(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    app.toggle_slow_panel()
+    panel = app._slow_panel
+    panel.threshold_var.set("abc")
+    panel.scan()
+    assert "올바르지" in panel.info_var.get()
+    panel.threshold_var.set("1.0")
+    panel.scan()                                     # 열린 탭 없음 안내
+    assert "열린 로그" in panel.info_var.get()
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_slow_panel_toggle_closes_and_stops(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_slow_log(app, root, tmp_path, "tg.log")
+    app.toggle_slow_panel()
+    panel = app._slow_panel
+    panel.threshold_var.set("0.1")
+    panel.scan()
+    app.toggle_slow_panel()                          # 닫기 → 스캔 중단 + 위젯 제거
+    assert app._slow_panel is None
+    assert not panel.winfo_exists()
+    assert tab.engine.slow_hit_count() == 0          # stop_slow_scan으로 정리됨
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_slow_panel_resets_when_tab_closed(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_slow_log(app, root, tmp_path, "cl.log")
+    app.toggle_slow_panel()
+    panel = app._slow_panel
+    panel.threshold_var.set("1.0")
+    panel.scan()
+    _pump_until(root, app, lambda: tab.engine.is_slow_scan_complete() and panel._shown >= 2)
+    app.close_tab()                                  # 스캔했던 탭 닫힘
+    assert panel._tab is None
+    assert panel._shown == 0
+    assert "닫혔" in panel.info_var.get()
+    for t in app.tabs.all():
+        t.close()
+
+
+def test_goto_line_blocked_by_hide_or_clear(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(wintail.cfg, "save", lambda c, p=None: None)
+    app = wintail.App(root)
+    app.pump.stop()
+    tab = _open_slow_log(app, root, tmp_path, "gd.log")
+    # 화면 지우기로 숨긴 영역 → 이동하지 않고 안내
+    tab._clear_line = 150
+    tab.goto_line(120)
+    assert "복원" in app.status.cget("text")
+    assert tab.model.top_line == 0
+    tab._clear_line = 0
+    # hide 필터 중 → 이동하지 않고 안내
+    tab.apply_filter("Time", "hide", False, False)
+    _wait_filter_complete(app, root, tab)
+    tab.goto_line(120)
+    assert "hide" in app.status.cget("text")
+    for t in app.tabs.all():
+        t.close()
+
+
 def test_multi_tab(root, tmp_path):
     app = wintail.App(root)
     app.pump.stop()

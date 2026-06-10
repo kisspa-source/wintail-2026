@@ -19,6 +19,8 @@ from engine.events import (
     IndexComplete,
     IndexProgress,
     Opened,
+    SlowScanComplete,
+    SlowScanProgress,
     Truncated,
 )
 from engine.logengine import LogEngine
@@ -137,6 +139,8 @@ class LogTab:
             elif isinstance(e, FileError):
                 self._status_msg = e.message
                 changed = True
+            elif isinstance(e, (SlowScanProgress, SlowScanComplete)):
+                self.app.on_slow_scan_event(self, e)  # 본문 변화 없음 — 패널만 갱신
         if changed:
             self.model.set_total(self._source_total())
             if self.live and self.auto:
@@ -291,6 +295,25 @@ class LogTab:
         else:
             self.model.set_top(self.model.top_line)
         self.render()
+
+    def goto_line(self, line: int) -> None:
+        """절대 줄 번호로 이동(화면 가운데) 후 그 줄을 선택 표시 — 느린 쿼리 패널용.
+
+        hide 필터/화면 지우기로 그 줄이 표시 대상이 아니면 이동하지 않고 상태바로
+        안내한다(말없이 엉뚱한 곳에 가지 않도록).
+        """
+        if self._is_hide():
+            self.app.set_status_message(
+                "hide 필터 적용 중에는 줄 이동을 할 수 없습니다 — 필터를 highlight로 바꾸거나 지워주세요")
+            return
+        if line < self._clear_line:
+            self.app.set_status_message(
+                "화면 지우기로 숨긴 영역의 줄입니다 — 보기 ▸ '지운 화면 복원' 후 이동하세요")
+            return
+        self._goto_centered(line)
+        rl = line - self._clear_rows() - self.model.top_line + 1
+        if 1 <= rl <= self.model.viewport_lines:
+            self.view.select_render(rl, 0, rl, "end")
 
     def goto_next_match(self, forward: bool = True) -> None:
         """highlight 모드에서 다음(Enter)/이전(Shift+Enter) 일치 줄로 이동한다.

@@ -16,6 +16,7 @@ from engine.encoding import supported_codecs
 from ui import config as cfg
 from ui.bridge import EventPump
 from ui.highlight import LevelClassifier
+from ui.slowpanel import SlowQueryPanel
 from ui.style import apply_combobox_popup, apply_style
 from ui.tabs import TabManager
 from ui.theme import get_theme, resolve_name, theme_names
@@ -44,13 +45,18 @@ class App:
         self._wrap = bool(self.config.get("wrap", False))
         self._filter_after = None
         self._toast = None
+        self._slow_panel = None
 
         root.title("wintail-2026")
         root.geometry("1100x720")
         self._build_menu()      # 커스텀 메뉴바(최상단)
         self._build_toolbar()
-        self.tabs = TabManager(self, root)
-        self.tabs.notebook.pack(fill="both", expand=True)
+        # 본문 컨테이너 — 노트북 + (토글되는) 우측 느린 쿼리 패널. 상태바는 이
+        # 컨테이너 아래에 깔려 패널이 열려도 전체 폭을 유지한다.
+        self._center = ttk.Frame(root)
+        self._center.pack(fill="both", expand=True)
+        self.tabs = TabManager(self, self._center)
+        self.tabs.notebook.pack(side="left", fill="both", expand=True)
         self._build_statusbar()
         self._apply_theme_chrome()
 
@@ -225,6 +231,8 @@ class App:
         viewmenu.add_command(label="화면 지우기  (Ctrl+L)", command=self.clear_display)
         viewmenu.add_command(label="지운 화면 복원", command=self.restore_display)
         viewmenu.add_separator()
+        viewmenu.add_command(label="느린 쿼리 찾기", command=self.toggle_slow_panel)
+        viewmenu.add_separator()
         self.wrap_var = tk.BooleanVar(value=self._wrap)
         viewmenu.add_checkbutton(label="자동 줄바꿈", variable=self.wrap_var,
                                  command=self._on_wrap_toggle)
@@ -292,7 +300,31 @@ class App:
             pass
 
     def close_tab(self) -> None:
+        cur = self.tabs.current()
         self.tabs.close_current()
+        if cur is not None and self._slow_panel is not None:
+            self._slow_panel.on_tab_closed(cur)
+
+    def toggle_slow_panel(self) -> None:
+        """느린 쿼리 패널(우측) 열기/닫기 — 닫으면 진행 중 스캔도 중단한다."""
+        if self._slow_panel is not None:
+            self._slow_panel.close()
+            self._slow_panel = None
+            return
+        self._slow_panel = SlowQueryPanel(self, self._center)
+        self._slow_panel.pack(side="right", fill="y")
+
+    def on_slow_scan_event(self, tab, event) -> None:
+        if self._slow_panel is not None:
+            self._slow_panel.on_scan_event(tab, event)
+
+    def show_slow_hit(self, tab, line: int) -> None:
+        """느린 쿼리 패널 행 클릭 — 그 탭을 앞으로 가져와 해당 줄로 이동한다."""
+        if tab not in self.tabs.all():
+            self.set_status_message("해당 로그 탭이 이미 닫혔습니다")
+            return
+        self.tabs.notebook.select(tab.view)
+        tab.goto_line(line)
 
     def clear_display(self) -> None:
         """현재 탭 화면 지우기 — 표시만 비우고 실제 파일은 건드리지 않는다."""

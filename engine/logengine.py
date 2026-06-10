@@ -17,6 +17,7 @@ from engine.filereader import DEFAULT_MAX_LINE_BYTES, FileReader
 from engine.filterscanner import FilterScanner, Matcher
 from engine.indexer import CHECKPOINT_BYTES, READ_CHUNK, BackgroundIndexer, ScanState
 from engine.linescan import iter_lines
+from engine.slowscan import SlowQueryScanner
 from engine.tailwatcher import POLL_INTERVAL, TailWatcher
 
 SAMPLE_BYTES = 65536
@@ -50,6 +51,9 @@ class LogEngine:
         self._filter_scanner: FilterScanner | None = None
         self._filter_thread: threading.Thread | None = None
         self._filter_stop: threading.Event | None = None
+        self._slow_scanner: SlowQueryScanner | None = None
+        self._slow_thread: threading.Thread | None = None
+        self._slow_stop: threading.Event | None = None
         self.read_chunk = read_chunk
         self.checkpoint_bytes = checkpoint_bytes
         self.max_line_bytes = max_line_bytes
@@ -100,6 +104,7 @@ class LogEngine:
     def close(self) -> None:
         self.set_follow(False)
         self.clear_filter()
+        self.stop_slow_scan()
         if self._stop is not None:
             self._stop.set()
         if self._thread is not None:
@@ -281,6 +286,59 @@ class LogEngine:
                     return ln.line_no
             hi = lo
         return None
+
+    # ---- 느린 쿼리 스캔 -------------------------------------------------
+
+    def start_slow_scan(self, threshold_ms: int) -> None:
+        """Time:<ms>가 threshold_ms 이상인 줄을 백그라운드로 수집한다.
+
+        이전 스캔은 중단하고 새로 시작한다. 결과는 slow_hit_count/slow_hit로
+        읽고, 진행/완료는 SlowScanProgress/SlowScanComplete 이벤트로 알린다.
+        """
+        self.stop_slow_scan()
+        if self._reader is None:
+            return
+        self._slow_stop = threading.Event()
+        self._slow_scanner = SlowQueryScanner(
+            self._reader,
+            self._emit,
+            threshold_ms,
+            start_offset=self._reader.info.bom_len,
+            read_chunk=self.read_chunk,
+            line_cap=self._line_cap,
+            total_size=self._reader.size(),
+            stop_event=self._slow_stop,
+        )
+        self._slow_thread = threading.Thread(
+            target=self._slow_scanner.run, name="wintail-slowscan", daemon=True
+        )
+        self._slow_thread.start()
+
+    def stop_slow_scan(self) -> None:
+        if self._slow_stop is not None:
+            self._slow_stop.set()
+        if self._slow_thread is not None:
+            self._slow_thread.join(timeout=2.0)
+            self._slow_thread = None
+        self._slow_scanner = None
+        self._slow_stop = None
+
+    def slow_hit_count(self) -> int:
+        sc = self._slow_scanner
+        return sc.hit_count() if sc is not None else 0
+
+    def slow_hit(self, i: int) -> tuple[int, int] | None:
+        """i번째 느린 쿼리 (줄 번호, ms). 스캐너 없음/범위 밖이면 None."""
+        sc = self._slow_scanner
+        return sc.hit_at(i) if sc is not None else None
+
+    def is_slow_scan_complete(self) -> bool:
+        return self._slow_scanner is None or not (
+            self._slow_thread and self._slow_thread.is_alive())
+
+    def slow_scan_capped(self) -> bool:
+        sc = self._slow_scanner
+        return bool(sc is not None and sc.capped)
 
     def _read_line_at(self, offset: int, line_no: int) -> Line:
         reader = self._reader

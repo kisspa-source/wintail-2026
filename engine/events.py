@@ -77,5 +77,21 @@ class FilterComplete:
 
 
 @dataclass(frozen=True)
+class SlowScanProgress:
+    """느린 쿼리 스캔 진행(주기적)."""
+
+    hits: int
+    scanned_bytes: int
+    size: int
+
+
+@dataclass(frozen=True)
+class SlowScanComplete:
+    """느린 쿼리 스캔 완료(중단 시에는 발행되지 않음)."""
+
+    hits: int
+
+
+@dataclass(frozen=True)
 class FileError:
     message: str

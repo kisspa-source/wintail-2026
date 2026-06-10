@@ -94,6 +94,16 @@ def apply_style(style: ttk.Style, t: dict) -> None:
               foreground=[("selected", fg)],
               expand=[("selected", (1, 1, 1, 0))])
 
+    # 느린 쿼리 패널 등 목록 표시용
+    style.configure("Treeview", background=ctrl, fieldbackground=ctrl,
+                    foreground=ctrl_fg, bordercolor=border)
+    style.configure("Treeview.Heading", background=bg, foreground=fg, relief="flat",
+                    padding=(6, 4))
+    style.map("Treeview",
+              background=[("selected", accent)],
+              foreground=[("selected", WHITE)])
+    style.map("Treeview.Heading", background=[("active", _shift(bg, 16))])
+
     for orient in ("Vertical", "Horizontal"):
         style.configure(f"{orient}.TScrollbar", background=ctrl, troughcolor=t["bg"],
                         bordercolor=border, arrowcolor=fg, relief="flat")
