@@ -6,7 +6,7 @@
 #   - Nuitka:  python -m pip install nuitka
 #
 # 사용법:
-#   ./build.ps1                 # dist/wintail.exe 생성
+#   ./build.ps1                 # dist/wintail-2026.exe 생성
 #   ./build.ps1 -Icon app.ico   # 아이콘 포함
 #
 # 산출물은 설치 불필요·빠른 시작의 단일 실행 파일이다(외부 의존성 0, 표준 라이브러리만).
@@ -23,7 +23,7 @@ $nuitkaArgs = @(
     "--company-name=wintail",
     "--product-name=wintail-2026",
     "--file-version=0.1.0",
-    "--output-filename=wintail.exe",
+    "--output-filename=wintail-2026.exe",
     "--output-dir=dist"
 )
 if ($Icon -ne "") {
@@ -34,7 +34,7 @@ Write-Host "Nuitka onefile 빌드 시작..." -ForegroundColor Cyan
 python -m nuitka @nuitkaArgs wintail.py
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "완료: dist/wintail.exe" -ForegroundColor Green
+    Write-Host "완료: dist/wintail-2026.exe" -ForegroundColor Green
 } else {
     Write-Host "빌드 실패 (exit $LASTEXITCODE)" -ForegroundColor Red
     exit $LASTEXITCODE

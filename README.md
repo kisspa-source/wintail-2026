@@ -12,11 +12,13 @@ sparse 체크포인트 인덱스를 만들고, 화면에 보이는 영역만 읽
 그 결과 **5GB+ 파일도 즉시 열리고(끝부분 ms 단위 표시, 전체 인덱싱 ~1.3GB/s),
 메모리는 수십 MB만** 쓴다.
 
+![wintail-2026 — 다크 테마, 로그 레벨 색상, 다중 하이라이트 규칙](docs/screenshot.png)
+
 ## 다운로드
 
 설치 불필요 — 단일 실행 파일을 내려받아 바로 실행한다.
 
-**▶ [wintail.exe 다운로드](https://github.com/kisspa-source/wintail-2026/releases/latest/download/wintail.exe)** (최신 릴리스)
+**▶ [wintail-2026.exe 다운로드](https://github.com/kisspa-source/wintail-2026/releases/latest/download/wintail-2026.exe)** (최신 릴리스)
 
 모든 버전은 [릴리스 페이지](https://github.com/kisspa-source/wintail-2026/releases)에서 확인할 수 있다.
 
@@ -53,7 +55,7 @@ python wintail.py C:\logs\app.log # 파일 열고 시작
 
 ```powershell
 python -m pip install nuitka      # 빌드 도구 (MSVC 필요)
-./build.ps1                       # -> dist/wintail.exe
+./build.ps1                       # -> dist/wintail-2026.exe
 ```
 
 ## 테스트
